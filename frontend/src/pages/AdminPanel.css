@@ -1,0 +1,194 @@
+.admin-panel-container {
+  min-height: 100vh;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  padding: 2rem;
+}
+
+.admin-panel {
+  max-width: 1200px;
+  margin: 0 auto;
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
+  padding: 2.5rem;
+}
+
+.admin-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 2rem;
+  padding-bottom: 1.5rem;
+  border-bottom: 1px solid #eee;
+}
+
+.admin-panel h1 {
+  color: #333;
+  margin-bottom: 0.5rem;
+  font-size: 2rem;
+}
+
+.back-link {
+  color: #667eea;
+  text-decoration: none;
+  font-size: 0.9rem;
+  font-weight: 500;
+  transition: color 0.3s;
+  white-space: nowrap;
+  margin-left: 1rem;
+}
+
+.back-link:hover {
+  color: #764ba2;
+  text-decoration: underline;
+}
+
+.subtitle {
+  color: #666;
+  margin-bottom: 2rem;
+  font-size: 1rem;
+}
+
+.form-section {
+  margin-bottom: 3rem;
+  padding-bottom: 2rem;
+  border-bottom: 1px solid #eee;
+}
+
+.form-section h2 {
+  color: #333;
+  font-size: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.form-group {
+  margin-bottom: 1.5rem;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 0.5rem;
+  color: #333;
+  font-weight: 500;
+  font-size: 0.9rem;
+}
+
+.form-group input {
+  width: 100%;
+  padding: 0.75rem;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  font-size: 1rem;
+  transition: border-color 0.3s;
+  font-family: inherit;
+}
+
+.form-group input:focus {
+  outline: none;
+  border-color: #667eea;
+}
+
+.error-message {
+  background-color: #fee;
+  color: #c33;
+  padding: 0.75rem;
+  border-radius: 6px;
+  margin-bottom: 1rem;
+  font-size: 0.9rem;
+}
+
+.success-message {
+  background-color: #efe;
+  color: #3c3;
+  padding: 0.75rem;
+  border-radius: 6px;
+  margin-bottom: 1rem;
+  font-size: 0.9rem;
+}
+
+.submit-button {
+  width: 100%;
+  padding: 0.75rem;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.3s;
+}
+
+.submit-button:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.submit-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.clients-section h2 {
+  color: #333;
+  font-size: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.loading,
+.no-clients {
+  text-align: center;
+  padding: 2rem;
+  color: #666;
+  font-size: 1rem;
+}
+
+.clients-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 1.5rem;
+}
+
+.client-card {
+  background: #f8f9fa;
+  padding: 1.5rem;
+  border-radius: 8px;
+  border: 1px solid #e9ecef;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.client-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+.client-info h3 {
+  color: #333;
+  margin-bottom: 0.5rem;
+  font-size: 1.1rem;
+}
+
+.client-email {
+  color: #666;
+  margin-bottom: 0.5rem;
+  font-size: 0.9rem;
+}
+
+.client-date {
+  color: #999;
+  font-size: 0.85rem;
+}
+
+@media (max-width: 768px) {
+  .admin-panel-container {
+    padding: 1rem;
+  }
+
+  .admin-panel {
+    padding: 1.5rem;
+  }
+
+  .clients-list {
+    grid-template-columns: 1fr;
+  }
+}
+
