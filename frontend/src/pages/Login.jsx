@@ -64,6 +64,10 @@ const Login = () => {
             {loading ? 'Signing in...' : 'Sign In'}
           </button>
         </form>
+        
+        <div className="admin-link">
+          <a href="/admin">Admin Panel - Add Clients</a>
+        </div>
       </div>
     </div>
   );
