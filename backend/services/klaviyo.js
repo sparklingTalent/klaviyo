@@ -30,16 +30,19 @@ export class KlaviyoService {
     }
   }
 
-  // Campaign Metrics - Simplified approach
+  // Campaign Metrics - Using correct Klaviyo API v3 structure
   async getCampaignMetrics() {
     try {
-      const campaigns = await this.makeRequest('/campaigns', { 'page[size]': 100 });
+      // Get campaigns with included relationships for statistics
+      const campaigns = await this.makeRequest('/campaigns', { 
+        'page[size]': 100,
+        'include': 'campaign-messages'
+      });
       const campaignData = campaigns?.data || [];
+      const included = campaigns?.included || [];
       
       console.log(`Found ${campaignData.length} campaigns`);
-      if (campaignData.length > 0) {
-        console.log('Sample campaign structure:', JSON.stringify(campaignData[0], null, 2));
-      }
+      console.log(`Found ${included.length} included resources`);
 
       let totalOpens = 0;
       let totalClicks = 0;
@@ -47,39 +50,71 @@ export class KlaviyoService {
       let totalBounces = 0;
       let totalRevenue = 0;
 
+      // Map included campaign messages by their relationship to campaigns
+      const messageMap = {};
+      for (const item of included) {
+        if (item.type === 'campaign-message') {
+          // Store messages by their ID
+          messageMap[item.id] = item;
+        }
+      }
+
       for (const campaign of campaignData) {
         const campaignId = campaign.id;
         if (!campaignId) continue;
 
         try {
           // Get campaign messages
-          const messages = await this.makeRequest(`/campaigns/${campaignId}/campaign-messages`, { 'page[size]': 100 });
-          const messageData = messages?.data || [];
+          const messagesResponse = await this.makeRequest(`/campaigns/${campaignId}/campaign-messages`, { 
+            'page[size]': 100,
+            'include': 'statistics'
+          });
+          const messageData = messagesResponse?.data || [];
+          const messageIncluded = messagesResponse?.included || [];
 
           console.log(`Campaign ${campaignId} has ${messageData.length} messages`);
 
-          for (const message of messageData) {
-            // Check if statistics are in the message attributes
-            const stats = message.attributes?.statistics || message.attributes || {};
-            
-            totalOpens += parseInt(stats.opens || stats.opened_count || stats.email_opened || 0);
-            totalClicks += parseInt(stats.clicks || stats.clicked_count || stats.email_clicked || 0);
-            totalDelivered += parseInt(stats.sent || stats.delivered || stats.delivered_count || 0);
-            totalBounces += parseInt(stats.bounces || stats.bounced || stats.bounced_count || 0);
-            totalRevenue += parseFloat(stats.revenue || stats.revenue_total || 0);
+          // Process included statistics if available
+          for (const item of messageIncluded) {
+            if (item.type === 'statistics' || item.attributes) {
+              const stats = item.attributes || {};
+              totalOpens += parseInt(stats.opens || stats.opened_count || 0);
+              totalClicks += parseInt(stats.clicks || stats.clicked_count || 0);
+              totalDelivered += parseInt(stats.sent || stats.delivered || stats.delivered_count || 0);
+              totalBounces += parseInt(stats.bounces || stats.bounced_count || 0);
+              totalRevenue += parseFloat(stats.revenue || 0);
+            }
           }
 
-          // If no messages, try to get campaign-level statistics
-          if (messageData.length === 0) {
-            const campaignStats = campaign.attributes?.statistics || campaign.attributes || {};
-            totalOpens += parseInt(campaignStats.opens || campaignStats.opened_count || 0);
-            totalClicks += parseInt(campaignStats.clicks || campaignStats.clicked_count || 0);
-            totalDelivered += parseInt(campaignStats.sent || campaignStats.delivered || 0);
-            totalBounces += parseInt(campaignStats.bounces || campaignStats.bounced_count || 0);
-            totalRevenue += parseFloat(campaignStats.revenue || 0);
+          // Process each message
+          for (const message of messageData) {
+            const messageId = message.id;
+            const messageAttrs = message.attributes || {};
+            
+            // Check if message has statistics in attributes
+            const stats = messageAttrs.statistics || messageAttrs || {};
+            
+            // Also check included data for this message
+            const includedMessage = messageMap[messageId];
+            if (includedMessage && includedMessage.attributes) {
+              const includedStats = includedMessage.attributes.statistics || includedMessage.attributes || {};
+              totalOpens += parseInt(includedStats.opens || includedStats.opened_count || stats.opens || 0);
+              totalClicks += parseInt(includedStats.clicks || includedStats.clicked_count || stats.clicks || 0);
+              totalDelivered += parseInt(includedStats.sent || includedStats.delivered || includedStats.delivered_count || stats.sent || 0);
+              totalBounces += parseInt(includedStats.bounces || includedStats.bounced_count || stats.bounces || 0);
+              totalRevenue += parseFloat(includedStats.revenue || stats.revenue || 0);
+            } else {
+              // Fallback: try to extract from message attributes
+              totalOpens += parseInt(stats.opens || stats.opened_count || 0);
+              totalClicks += parseInt(stats.clicks || stats.clicked_count || 0);
+              totalDelivered += parseInt(stats.sent || stats.delivered || stats.delivered_count || 0);
+              totalBounces += parseInt(stats.bounces || stats.bounced_count || 0);
+              totalRevenue += parseFloat(stats.revenue || 0);
+            }
           }
         } catch (err) {
           console.error(`Error processing campaign ${campaignId}:`, err.message);
+          console.error('Error details:', err.response?.data || err);
         }
       }
 
@@ -87,7 +122,7 @@ export class KlaviyoService {
         ? ((totalClicks / totalDelivered) * 100).toFixed(2) 
         : '0.00';
 
-      console.log(`Campaign totals - Opens: ${totalOpens}, Clicks: ${totalClicks}, Delivered: ${totalDelivered}`);
+      console.log(`Campaign totals - Opens: ${totalOpens}, Clicks: ${totalClicks}, Delivered: ${totalDelivered}, Bounces: ${totalBounces}`);
 
       return {
         opens: totalOpens,
@@ -108,20 +143,31 @@ export class KlaviyoService {
     }
   }
 
-  // Flow Metrics - Simplified approach
+  // Flow Metrics - Using correct Klaviyo API v3 structure
   async getFlowMetrics() {
     try {
-      const flows = await this.makeRequest('/flows', { 'page[size]': 100 });
+      // Get flows with included relationships
+      const flows = await this.makeRequest('/flows', { 
+        'page[size]': 100,
+        'include': 'flow-actions'
+      });
       const flowData = flows?.data || [];
+      const included = flows?.included || [];
       
       console.log(`Found ${flowData.length} flows`);
-      if (flowData.length > 0) {
-        console.log('Sample flow structure:', JSON.stringify(flowData[0], null, 2));
-      }
+      console.log(`Found ${included.length} included resources`);
 
       let totalSends = 0;
       let totalConversions = 0;
       let totalRevenue = 0;
+
+      // Map included flow actions
+      const actionMap = {};
+      for (const item of included) {
+        if (item.type === 'flow-action') {
+          actionMap[item.id] = item;
+        }
+      }
 
       for (const flow of flowData) {
         const flowId = flow.id;
@@ -129,29 +175,50 @@ export class KlaviyoService {
 
         try {
           // Get flow actions
-          const actions = await this.makeRequest(`/flows/${flowId}/flow-actions`, { 'page[size]': 100 });
-          const actionData = actions?.data || [];
+          const actionsResponse = await this.makeRequest(`/flows/${flowId}/flow-actions`, { 
+            'page[size]': 100,
+            'include': 'statistics'
+          });
+          const actionData = actionsResponse?.data || [];
+          const actionIncluded = actionsResponse?.included || [];
 
           console.log(`Flow ${flowId} has ${actionData.length} actions`);
 
-          for (const action of actionData) {
-            // Check if statistics are in the action attributes
-            const stats = action.attributes?.statistics || action.attributes || {};
-            
-            totalSends += parseInt(stats.sends || stats.sent || stats.delivered || stats.delivered_count || 0);
-            totalConversions += parseInt(stats.conversions || stats.converted || stats.converted_count || 0);
-            totalRevenue += parseFloat(stats.revenue || stats.revenue_total || 0);
+          // Process included statistics if available
+          for (const item of actionIncluded) {
+            if (item.type === 'statistics' || item.attributes) {
+              const stats = item.attributes || {};
+              totalSends += parseInt(stats.sends || stats.sent || stats.delivered || stats.delivered_count || 0);
+              totalConversions += parseInt(stats.conversions || stats.converted || stats.converted_count || 0);
+              totalRevenue += parseFloat(stats.revenue || 0);
+            }
           }
 
-          // If no actions, try to get flow-level statistics
-          if (actionData.length === 0) {
-            const flowStats = flow.attributes?.statistics || flow.attributes || {};
-            totalSends += parseInt(flowStats.sends || flowStats.sent || 0);
-            totalConversions += parseInt(flowStats.conversions || flowStats.converted || 0);
-            totalRevenue += parseFloat(flowStats.revenue || 0);
+          // Process each flow action
+          for (const action of actionData) {
+            const actionId = action.id;
+            const actionAttrs = action.attributes || {};
+            
+            // Check if action has statistics in attributes
+            const stats = actionAttrs.statistics || actionAttrs || {};
+            
+            // Also check included data for this action
+            const includedAction = actionMap[actionId];
+            if (includedAction && includedAction.attributes) {
+              const includedStats = includedAction.attributes.statistics || includedAction.attributes || {};
+              totalSends += parseInt(includedStats.sends || includedStats.sent || includedStats.delivered || stats.sends || 0);
+              totalConversions += parseInt(includedStats.conversions || includedStats.converted || stats.conversions || 0);
+              totalRevenue += parseFloat(includedStats.revenue || stats.revenue || 0);
+            } else {
+              // Fallback: try to extract from action attributes
+              totalSends += parseInt(stats.sends || stats.sent || stats.delivered || stats.delivered_count || 0);
+              totalConversions += parseInt(stats.conversions || stats.converted || stats.converted_count || 0);
+              totalRevenue += parseFloat(stats.revenue || 0);
+            }
           }
         } catch (err) {
           console.error(`Error processing flow ${flowId}:`, err.message);
+          console.error('Error details:', err.response?.data || err);
         }
       }
 
@@ -159,7 +226,7 @@ export class KlaviyoService {
         ? ((totalConversions / totalSends) * 100).toFixed(2) 
         : '0.00';
 
-      console.log(`Flow totals - Sends: ${totalSends}, Conversions: ${totalConversions}`);
+      console.log(`Flow totals - Sends: ${totalSends}, Conversions: ${totalConversions}, Revenue: ${totalRevenue}`);
 
       return {
         flowConversionRate: `${conversionRate}%`,
