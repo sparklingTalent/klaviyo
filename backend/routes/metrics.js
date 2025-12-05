@@ -15,6 +15,7 @@ router.get('/all', authenticateToken, async (req, res) => {
     const clients = await query('SELECT klaviyo_private_key FROM clients WHERE id = ?', [clientId]);
     
     if (clients.length === 0) {
+      console.error(`Client not found in database for clientId: ${clientId}, user:`, req.user);
       return res.status(404).json({ error: 'Client not found' });
     }
 
@@ -80,6 +81,7 @@ router.get('/simple', authenticateToken, async (req, res) => {
     const clients = await query('SELECT klaviyo_private_key FROM clients WHERE id = ?', [clientId]);
     
     if (clients.length === 0) {
+      console.error(`Client not found in database for clientId: ${clientId}, user:`, req.user);
       return res.status(404).json({ error: 'Client not found' });
     }
 
