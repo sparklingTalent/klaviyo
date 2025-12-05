@@ -6,7 +6,7 @@ import axios from 'axios';
 
 const router = express.Router();
 
-// Get all metrics for authenticated client
+// Get all metrics for authenticated client (Complex version)
 router.get('/all', authenticateToken, async (req, res) => {
   try {
     const clientId = req.user.id;
@@ -19,12 +19,77 @@ router.get('/all', authenticateToken, async (req, res) => {
     }
 
     const klaviyoService = new KlaviyoService(clients[0].klaviyo_private_key);
-    const metrics = await klaviyoService.getAllMetrics();
+    
+    // Get all metrics and also campaign/flow counts
+    // Use Promise.allSettled to handle partial failures gracefully
+    const [metricsResult, campaignsResult, flowsResult] = await Promise.allSettled([
+      klaviyoService.getAllMetrics().catch(err => {
+        console.error('Error in getAllMetrics:', err);
+        return {
+          campaign: { opens: 0, clicks: 0, delivered: 0, bounces: 0, revenue: 0, clickThroughRate: '0.00%' },
+          flow: { flowSends: 0, flowConversions: 0, flowConversionRate: '0.00%', flowRevenue: 0 },
+          event: { placedOrder: 0, viewedProduct: 0, addedToCart: 0, activeOnSite: 0 },
+          profile: { totalProfiles: 0, listMembership: 0, listGrowth: '0%' },
+          revenue: { totalRevenue: 0, revenueByEmailSource: {}, revenueOverTime: [] }
+        };
+      }),
+      klaviyoService.getCampaigns().catch(() => ({ data: [] })),
+      klaviyoService.getFlows().catch(() => ({ data: [] }))
+    ]);
+
+    const metrics = metricsResult.status === 'fulfilled' ? metricsResult.value : {
+      campaign: { opens: 0, clicks: 0, delivered: 0, bounces: 0, revenue: 0, clickThroughRate: '0.00%' },
+      flow: { flowSends: 0, flowConversions: 0, flowConversionRate: '0.00%', flowRevenue: 0 },
+      event: { placedOrder: 0, viewedProduct: 0, addedToCart: 0, activeOnSite: 0 },
+      profile: { totalProfiles: 0, listMembership: 0, listGrowth: '0%' },
+      revenue: { totalRevenue: 0, revenueByEmailSource: {}, revenueOverTime: [] }
+    };
+
+    const campaigns = campaignsResult.status === 'fulfilled' ? campaignsResult.value : { data: [] };
+    const flows = flowsResult.status === 'fulfilled' ? flowsResult.value : { data: [] };
+
+    // Add overview data
+    const overview = {
+      totalCampaigns: campaigns?.data?.length || 0,
+      totalFlows: flows?.data?.length || 0,
+      totalRevenue: metrics.revenue?.totalRevenue || 0
+    };
+
+    res.json({
+      ...metrics,
+      overview,
+      lastUpdated: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Error fetching metrics:', error);
+    console.error('Error stack:', error.stack);
+    res.status(500).json({ 
+      error: 'Failed to fetch metrics',
+      message: error.message,
+      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+});
+
+// Get simple metrics for authenticated client (Simple version)
+router.get('/simple', authenticateToken, async (req, res) => {
+  try {
+    const clientId = req.user.id;
+
+    // Get client's Klaviyo private key
+    const clients = await query('SELECT klaviyo_private_key FROM clients WHERE id = ?', [clientId]);
+    
+    if (clients.length === 0) {
+      return res.status(404).json({ error: 'Client not found' });
+    }
+
+    const klaviyoService = new KlaviyoService(clients[0].klaviyo_private_key);
+    const metrics = await klaviyoService.getSimpleMetrics();
 
     res.json(metrics);
   } catch (error) {
-    console.error('Error fetching metrics:', error);
-    res.status(500).json({ error: 'Failed to fetch metrics' });
+    console.error('Error fetching simple metrics:', error);
+    res.status(500).json({ error: 'Failed to fetch simple metrics' });
   }
 });
 
