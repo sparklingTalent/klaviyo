@@ -66,10 +66,11 @@ const Dashboard = () => {
   }
 
   if (error) {
-    // Check if error is about token expiration
+    // Check if error is about token expiration or client not found
     const isTokenError = error.toLowerCase().includes('token') || 
                         error.toLowerCase().includes('expired') ||
-                        error.toLowerCase().includes('invalid');
+                        error.toLowerCase().includes('invalid') ||
+                        error.toLowerCase().includes('client not found');
     
     return (
       <div className="dashboard-container">
@@ -77,7 +78,7 @@ const Dashboard = () => {
           {error}
           {isTokenError ? (
             <div style={{ marginTop: '1rem' }}>
-              <p>Your session has expired. Please log in again.</p>
+              <p>Your session is invalid or the client account no longer exists. Please log in again.</p>
               <button 
                 onClick={() => {
                   localStorage.removeItem('token');
