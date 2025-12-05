@@ -136,7 +136,23 @@ The frontend will run on `http://localhost:3000`
 
 ## Adding a Client
 
-### Method 1: Using the API Endpoint
+### Method 1: Using the Admin Panel (Recommended)
+
+1. Navigate to the admin panel in your browser:
+   - Local: `http://localhost:3000/admin`
+   - Production: `https://your-vercel-app.vercel.app/admin`
+
+2. Fill in the form with:
+   - Client Name
+   - Email
+   - Password
+   - Klaviyo Private Key
+
+3. Click "Add Client"
+
+The admin panel also displays all existing clients.
+
+### Method 2: Using the API Endpoint
 
 Make a POST request to `/api/admin/clients`:
 

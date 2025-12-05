@@ -33,7 +33,20 @@ const Dashboard = () => {
   if (loading) {
     return (
       <div className="dashboard-container">
-        <div className="loading">Loading metrics...</div>
+        <header className="dashboard-header">
+          <div>
+            <h1>Klaviyo Metrics Dashboard</h1>
+            <p>Welcome back, {user?.name}</p>
+          </div>
+          <button onClick={logout} className="logout-button">
+            Logout
+          </button>
+        </header>
+        <div className="dashboard-content">
+          <div className="loading">
+            Loading metrics...
+          </div>
+        </div>
       </div>
     );
   }
@@ -41,8 +54,22 @@ const Dashboard = () => {
   if (error) {
     return (
       <div className="dashboard-container">
-        <div className="error">{error}</div>
-        <button onClick={fetchMetrics} className="retry-button">Retry</button>
+        <header className="dashboard-header">
+          <div>
+            <h1>Klaviyo Metrics Dashboard</h1>
+            <p>Welcome back, {user?.name}</p>
+          </div>
+          <button onClick={logout} className="logout-button">
+            Logout
+          </button>
+        </header>
+        <div className="dashboard-content">
+          <div className="error">
+            <div style={{ fontSize: '1.5rem', marginBottom: '1rem' }}>⚠️</div>
+            {error}
+          </div>
+          <button onClick={fetchMetrics} className="retry-button">Retry</button>
+        </div>
       </div>
     );
   }
@@ -54,9 +81,14 @@ const Dashboard = () => {
           <h1>Klaviyo Metrics Dashboard</h1>
           <p>Welcome back, {user?.name}</p>
         </div>
-        <button onClick={logout} className="logout-button">
-          Logout
-        </button>
+        <div className="header-actions">
+          <button onClick={fetchMetrics} className="refresh-button" title="Refresh metrics">
+            🔄 Refresh
+          </button>
+          <button onClick={logout} className="logout-button">
+            Logout
+          </button>
+        </div>
       </header>
 
       <div className="dashboard-content">
