@@ -131,9 +131,32 @@ const Dashboard = () => {
               <h3 className="metric-title">Total Flows</h3>
               <p className="metric-value">{metrics?.overview?.totalFlows || 0}</p>
             </div>
-            <div className="metric-card white-bg">
+          </div>
+        </div>
+
+        {/* Revenue Section */}
+        <div className="section">
+          <h2 className="section-title">Revenue Metrics</h2>
+          <div className="overview-grid">
+            <div className="metric-card purple-gradient">
               <h3 className="metric-title">Total Revenue</h3>
-              <p className="metric-value">{formatCurrency(metrics?.overview?.totalRevenue || 0)}</p>
+              <p className="metric-value white">{formatCurrency(metrics?.revenue?.totalRevenue || 0)}</p>
+            </div>
+            <div className="metric-card white-bg">
+              <h3 className="metric-title">Campaign Revenue</h3>
+              <p className="metric-value">{formatCurrency(
+                metrics?.revenue?.revenueByCampaigns 
+                  ? Object.values(metrics.revenue.revenueByCampaigns).reduce((sum, val) => sum + (parseFloat(val) || 0), 0)
+                  : 0
+              )}</p>
+            </div>
+            <div className="metric-card purple-gradient">
+              <h3 className="metric-title">Flow Revenue</h3>
+              <p className="metric-value white">{formatCurrency(
+                metrics?.revenue?.revenueByFlows 
+                  ? Object.values(metrics.revenue.revenueByFlows).reduce((sum, val) => sum + (parseFloat(val) || 0), 0)
+                  : 0
+              )}</p>
             </div>
           </div>
         </div>

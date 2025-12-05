@@ -7,7 +7,7 @@ export class KlaviyoService {
     this.privateKey = privateKey;
     this.baseURL = KLAVIYO_API_BASE;
     this.lastRequestTime = 0;
-    this.minRequestInterval = 250; // 250ms between requests = max 4 requests per second (safe limit)
+    this.minRequestInterval = 500; // 500ms between requests = max 2 requests per second (more conservative)
   }
 
   // Wait/delay function
@@ -31,7 +31,7 @@ export class KlaviyoService {
   // Helper method to make authenticated requests using Klaviyo API v3
   // Includes rate limiting and retry logic for 429 throttling errors
   async makeRequest(endpoint, method = 'GET', data = null, params = {}, retryCount = 0) {
-    const maxRetries = 3;
+    const maxRetries = 5; // Increased retries for throttling
     
     try {
       // Rate limiting: ensure minimum delay between requests
@@ -49,7 +49,19 @@ export class KlaviyoService {
 
       // For GET requests, use params; for POST/PUT/PATCH, use data
       if (method === 'GET') {
+        // Use paramsSerializer to preserve bracket notation (e.g., page[size])
+        // Axios by default might convert brackets, so we need a custom serializer
         config.params = params;
+        config.paramsSerializer = (params) => {
+          const parts = [];
+          for (const [key, value] of Object.entries(params)) {
+            if (value !== null && value !== undefined) {
+              // Encode the key and value, preserving brackets in the key
+              parts.push(`${encodeURIComponent(key)}=${encodeURIComponent(value)}`);
+            }
+          }
+          return parts.join('&');
+        };
       } else if (data) {
         config.data = data;
       }
@@ -59,8 +71,11 @@ export class KlaviyoService {
     } catch (error) {
       // Handle 429 throttling errors with retry
       if (error.response?.status === 429 && retryCount < maxRetries) {
-        const retryAfter = error.response?.data?.errors?.[0]?.detail?.match(/(\d+)\s*second/i);
-        const waitTime = retryAfter ? parseInt(retryAfter[1]) * 1000 : 1000; // Default 1 second
+        // Extract wait time from error message
+        const errorDetail = error.response?.data?.errors?.[0]?.detail || '';
+        const retryAfter = errorDetail.match(/(\d+)\s*second/i);
+        // Use extracted time + 500ms buffer, or default to 2 seconds
+        const waitTime = retryAfter ? (parseInt(retryAfter[1]) * 1000 + 500) : 2000;
         
         console.log(`Throttled (429). Waiting ${waitTime}ms before retry ${retryCount + 1}/${maxRetries}...`);
         await this.wait(waitTime);
@@ -364,6 +379,7 @@ export class KlaviyoService {
 
       // Filter is REQUIRED for metric-aggregates endpoint
       // If no filters provided, use a default date range (last 1 year)
+      // Note: Datetime values should NOT be in quotes per Klaviyo API requirements
       if (!filters || filters.length === 0) {
         const now = new Date();
         const oneYearAgo = new Date();
@@ -373,7 +389,20 @@ export class KlaviyoService {
           `less-than(datetime,${now.toISOString()})`
         ];
       }
-      requestBody.data.attributes.filter = filters;
+      // Process filters to ensure datetime values are not quoted
+      // Klaviyo API requires datetime values without quotes: datetime,2025-01-15T14:05:00.000Z
+      // NOT: datetime,"2025-01-15T14:05:00.000Z"
+      const processedFilters = filters.map(filter => {
+        // Remove quotes from datetime ISO strings if present
+        // Pattern: datetime,"2025-01-15T14:05:00.000Z" -> datetime,2025-01-15T14:05:00.000Z
+        let processed = filter.replace(/datetime,"([^"]+)"/g, 'datetime,$1');
+        // Also handle cases where the entire datetime value might be quoted
+        processed = processed.replace(/datetime,(".*?")/g, (match, quoted) => {
+          return `datetime,${quoted.replace(/"/g, '')}`;
+        });
+        return processed;
+      });
+      requestBody.data.attributes.filter = processedFilters;
 
       if (interval) {
         requestBody.data.attributes.interval = interval;
@@ -503,89 +532,90 @@ export class KlaviyoService {
 
       // Query metric aggregates grouped by $attributed_message (campaigns)
       // Per documentation: group by $attributed_message to get per-campaign metrics
-      const campaignMetricsPromises = [];
+      // Process sequentially to avoid rate limiting
+      let opensData = { total: 0, grouped: {} };
+      let clicksData = { total: 0, grouped: {} };
+      let deliveredData = { total: 0, grouped: {} };
+      let bouncesData = { total: 0, grouped: {} };
+      let revenueData = { total: 0, grouped: {} };
 
       // Get unique opens (grouped by campaign)
       // Per documentation: Use "Opened Email" metric with "unique" measurement
       if (openedEmailId) {
-        campaignMetricsPromises.push(
-          this.queryMetricAggregates(openedEmailId, {
+        try {
+          opensData = await this.queryMetricAggregates(openedEmailId, {
             measurements: ['unique'],
             filters: baseFilters,
             by: ['$attributed_message'], // Group by campaign
             timezone: timezone
-          }).catch(() => ({ total: 0, grouped: {} }))
-        );
-      } else {
-        campaignMetricsPromises.push(Promise.resolve({ total: 0, grouped: {} }));
+          });
+          await this.wait(500);
+        } catch (err) {
+          console.error('Error getting opens:', err.message);
+        }
       }
 
       // Get unique clicks (grouped by campaign)
       // Per documentation: Use "Clicked Email" metric with "unique" measurement
       if (clickedEmailId) {
-        campaignMetricsPromises.push(
-          this.queryMetricAggregates(clickedEmailId, {
+        try {
+          clicksData = await this.queryMetricAggregates(clickedEmailId, {
             measurements: ['unique'],
             filters: baseFilters,
             by: ['$attributed_message'], // Group by campaign
             timezone: timezone
-          }).catch(() => ({ total: 0, grouped: {} }))
-        );
-      } else {
-        campaignMetricsPromises.push(Promise.resolve({ total: 0, grouped: {} }));
+          });
+          await this.wait(500);
+        } catch (err) {
+          console.error('Error getting clicks:', err.message);
+        }
       }
 
       // Get total delivered/received (grouped by campaign)
       // Per documentation: Use "Received Email" metric with "count" measurement
       if (receivedEmailId) {
-        campaignMetricsPromises.push(
-          this.queryMetricAggregates(receivedEmailId, {
+        try {
+          deliveredData = await this.queryMetricAggregates(receivedEmailId, {
             measurements: ['count'],
             filters: baseFilters,
             by: ['$attributed_message'], // Group by campaign
             timezone: timezone
-          }).catch(() => ({ total: 0, grouped: {} }))
-        );
-      } else {
-        campaignMetricsPromises.push(Promise.resolve({ total: 0, grouped: {} }));
+          });
+          await this.wait(500);
+        } catch (err) {
+          console.error('Error getting delivered:', err.message);
+        }
       }
 
       // Get bounces (grouped by campaign)
       if (bouncedEmailId) {
-        campaignMetricsPromises.push(
-          this.queryMetricAggregates(bouncedEmailId, {
+        try {
+          bouncesData = await this.queryMetricAggregates(bouncedEmailId, {
             measurements: ['count'],
             filters: baseFilters,
             by: ['$attributed_message'], // Group by campaign
             timezone: timezone
-          }).catch(() => ({ total: 0, grouped: {} }))
-        );
-      } else {
-        campaignMetricsPromises.push(Promise.resolve({ total: 0, grouped: {} }));
+          });
+          await this.wait(500);
+        } catch (err) {
+          console.error('Error getting bounces:', err.message);
+        }
       }
 
       // Get revenue (grouped by campaign)
       // Per documentation: Use "Placed Order" metric with "sum_value" measurement
       if (placedOrderId) {
-        campaignMetricsPromises.push(
-          this.queryMetricAggregates(placedOrderId, {
+        try {
+          revenueData = await this.queryMetricAggregates(placedOrderId, {
             measurements: ['sum_value'],
             filters: baseFilters,
             by: ['$attributed_message'], // Group by campaign
             timezone: timezone
-          }).catch(() => ({ total: 0, grouped: {} }))
-        );
-      } else {
-        campaignMetricsPromises.push(Promise.resolve({ total: 0, grouped: {} }));
+          });
+        } catch (err) {
+          console.error('Error getting revenue:', err.message);
+        }
       }
-
-      const [opensResult, clicksResult, deliveredResult, bouncesResult, revenueResult] = await Promise.allSettled(campaignMetricsPromises);
-
-      const opensData = opensResult.status === 'fulfilled' ? opensResult.value : { total: 0, grouped: {} };
-      const clicksData = clicksResult.status === 'fulfilled' ? clicksResult.value : { total: 0, grouped: {} };
-      const deliveredData = deliveredResult.status === 'fulfilled' ? deliveredResult.value : { total: 0, grouped: {} };
-      const bouncesData = bouncesResult.status === 'fulfilled' ? bouncesResult.value : { total: 0, grouped: {} };
-      const revenueData = revenueResult.status === 'fulfilled' ? revenueResult.value : { total: 0, grouped: {} };
 
       // Calculate totals across all campaigns
       const totalOpens = opensData.total || 0;
@@ -642,18 +672,28 @@ export class KlaviyoService {
   async getFlowMetrics(options = {}) {
     try {
       const {
+        startDate = null,
+        endDate = null,
         timezone = "UTC"
       } = options;
 
       // Flow metrics need date filters (required by API)
-      // Use last 1 year as default
+      // Use provided dates or default to last 1 year
       const now = new Date();
       const oneYearAgo = new Date();
       oneYearAgo.setFullYear(now.getFullYear() - 1);
-      const baseFilters = [
-        `greater-or-equal(datetime,${oneYearAgo.toISOString()})`,
-        `less-than(datetime,${now.toISOString()})`
-      ];
+      
+      const baseFilters = [];
+      if (startDate && endDate) {
+        // Remove quotes if present in the date strings
+        const cleanStartDate = startDate.replace(/^"|"$/g, '');
+        const cleanEndDate = endDate.replace(/^"|"$/g, '');
+        baseFilters.push(`greater-or-equal(datetime,${cleanStartDate})`);
+        baseFilters.push(`less-than(datetime,${cleanEndDate})`);
+      } else {
+        baseFilters.push(`greater-or-equal(datetime,${oneYearAgo.toISOString()})`);
+        baseFilters.push(`less-than(datetime,${now.toISOString()})`);
+      }
 
       // First, get all metrics to find the metric IDs
       const allMetricsResponse = await this.getMetrics();
@@ -678,55 +718,54 @@ export class KlaviyoService {
 
       // Query metric aggregates grouped by $attributed_message (flows)
       // This will return metrics per flow
-      const flowMetricsPromises = [];
+      // Process sequentially to avoid rate limiting
+      let sendsData = { total: 0, grouped: {} };
+      let conversionsData = { total: 0, grouped: {} };
+      let revenueData = { total: 0, grouped: {} };
 
       // Get flow sends (Received Email count, grouped by flow)
       if (receivedEmailId) {
-        flowMetricsPromises.push(
-          this.queryMetricAggregates(receivedEmailId, {
+        try {
+          sendsData = await this.queryMetricAggregates(receivedEmailId, {
             measurements: ['count'],
             filters: baseFilters,
             by: ['$attributed_message'], // Group by flow
             timezone: timezone
-          }).catch(() => ({ total: 0, grouped: {} }))
-        );
-      } else {
-        flowMetricsPromises.push(Promise.resolve({ total: 0, grouped: {} }));
+          });
+          await this.wait(500);
+        } catch (err) {
+          console.error('Error getting flow sends:', err.message);
+        }
       }
 
       // Get flow conversions (Placed Order count, grouped by flow)
       if (placedOrderId) {
-        flowMetricsPromises.push(
-          this.queryMetricAggregates(placedOrderId, {
+        try {
+          conversionsData = await this.queryMetricAggregates(placedOrderId, {
             measurements: ['count'],
             filters: baseFilters,
             by: ['$attributed_message'], // Group by flow
             timezone: timezone
-          }).catch(() => ({ total: 0, grouped: {} }))
-        );
-      } else {
-        flowMetricsPromises.push(Promise.resolve({ total: 0, grouped: {} }));
+          });
+          await this.wait(500);
+        } catch (err) {
+          console.error('Error getting flow conversions:', err.message);
+        }
       }
 
       // Get flow revenue (Placed Order sum_value, grouped by flow)
       if (placedOrderId) {
-        flowMetricsPromises.push(
-          this.queryMetricAggregates(placedOrderId, {
+        try {
+          revenueData = await this.queryMetricAggregates(placedOrderId, {
             measurements: ['sum_value'],
             filters: baseFilters,
             by: ['$attributed_message'], // Group by flow
             timezone: timezone
-          }).catch(() => ({ total: 0, grouped: {} }))
-        );
-      } else {
-        flowMetricsPromises.push(Promise.resolve({ total: 0, grouped: {} }));
+          });
+        } catch (err) {
+          console.error('Error getting flow revenue:', err.message);
+        }
       }
-
-      const [sendsResult, conversionsResult, revenueResult] = await Promise.allSettled(flowMetricsPromises);
-
-      const sendsData = sendsResult.status === 'fulfilled' ? sendsResult.value : { total: 0, grouped: {} };
-      const conversionsData = conversionsResult.status === 'fulfilled' ? conversionsResult.value : { total: 0, grouped: {} };
-      const revenueData = revenueResult.status === 'fulfilled' ? revenueResult.value : { total: 0, grouped: {} };
 
       // Calculate totals across all flows
       const totalSends = sendsData.total || 0;
@@ -790,12 +829,13 @@ export class KlaviyoService {
       const oneMonthAgo = new Date();
       oneMonthAgo.setMonth(now.getMonth() - 1);
       
-      const defaultStartDate = startDate || oneMonthAgo.toISOString();
-      const defaultEndDate = endDate || now.toISOString();
+      // Remove quotes if present in date strings
+      const cleanStartDate = (startDate || oneMonthAgo.toISOString()).replace(/^"|"$/g, '');
+      const cleanEndDate = (endDate || now.toISOString()).replace(/^"|"$/g, '');
       
-      // Date filters are always required
-      filters.push(`greater-or-equal(datetime,${defaultStartDate})`);
-      filters.push(`less-than(datetime,${defaultEndDate})`);
+      // Date filters are always required - datetime values should NOT be in quotes
+      filters.push(`greater-or-equal(datetime,${cleanStartDate})`);
+      filters.push(`less-than(datetime,${cleanEndDate})`);
       
       // Add attributed message filter if specified
       if (attributedMessage) {
@@ -1068,17 +1108,41 @@ export class KlaviyoService {
         };
 
         // Get event counts for each metric using Query Metric Aggregates
-        const [placedOrderCount, viewedProductCount, addedToCartCount, activeOnSiteCount] = await Promise.allSettled([
-          placedOrderId ? getEventCountByMetricId(placedOrderId) : Promise.resolve(0),
-          viewedProductId ? getEventCountByMetricId(viewedProductId) : Promise.resolve(0),
-          addedToCartId ? getEventCountByMetricId(addedToCartId) : Promise.resolve(0),
-          activeOnSiteId ? getEventCountByMetricId(activeOnSiteId) : Promise.resolve(0)
-        ]);
-
-        metrics.placedOrder = placedOrderCount.status === 'fulfilled' ? placedOrderCount.value : 0;
-        metrics.viewedProduct = viewedProductCount.status === 'fulfilled' ? viewedProductCount.value : 0;
-        metrics.addedToCart = addedToCartCount.status === 'fulfilled' ? addedToCartCount.value : 0;
-        metrics.activeOnSite = activeOnSiteCount.status === 'fulfilled' ? activeOnSiteCount.value : 0;
+        // Process sequentially to avoid rate limiting
+        if (placedOrderId) {
+          try {
+            metrics.placedOrder = await getEventCountByMetricId(placedOrderId);
+            await this.wait(500);
+          } catch (err) {
+            console.error('Error getting placed order count:', err.message);
+          }
+        }
+        
+        if (viewedProductId) {
+          try {
+            metrics.viewedProduct = await getEventCountByMetricId(viewedProductId);
+            await this.wait(500);
+          } catch (err) {
+            console.error('Error getting viewed product count:', err.message);
+          }
+        }
+        
+        if (addedToCartId) {
+          try {
+            metrics.addedToCart = await getEventCountByMetricId(addedToCartId);
+            await this.wait(500);
+          } catch (err) {
+            console.error('Error getting added to cart count:', err.message);
+          }
+        }
+        
+        if (activeOnSiteId) {
+          try {
+            metrics.activeOnSite = await getEventCountByMetricId(activeOnSiteId);
+          } catch (err) {
+            console.error('Error getting active on site count:', err.message);
+          }
+        }
 
         console.log('Event metrics calculated:', metrics);
       } catch (err) {
@@ -1136,15 +1200,73 @@ export class KlaviyoService {
     }
   }
 
-  // Revenue Metrics
-  async getRevenueMetrics() {
+  // Get flow revenue for last month using $attributed_flow
+  // Per Klaviyo documentation: https://developers.klaviyo.com/en/docs/using_the_query_metric_aggregates_endpoint#flow-revenue-performance-reporting
+  async getFlowRevenueLastMonth() {
     try {
+      // Last 1 month (30 days) date range
       const endDate = new Date();
       const startDate = new Date();
-      startDate.setMonth(startDate.getMonth() - 12);
+      startDate.setDate(startDate.getDate() - 30);
+
+      // Get all metrics to find Placed Order metric
+      const allMetricsResponse = await this.getMetrics();
+      const allMetrics = allMetricsResponse?.data || [];
+      
+      const findMetricId = (searchName) => {
+        const metric = allMetrics.find(m => {
+          const name = m?.attributes?.name || m?.name || '';
+          return name.toLowerCase().includes(searchName.toLowerCase());
+        });
+        return metric?.id || null;
+      };
+
+      const placedOrderId = findMetricId('placed order');
+
+      if (!placedOrderId) {
+        console.warn('Placed Order metric not found, cannot calculate flow revenue');
+        return 0;
+      }
+
+      // Build date filters for last 30 days
+      const dateFilters = [
+        `greater-or-equal(datetime,${startDate.toISOString()})`,
+        `less-than(datetime,${endDate.toISOString()})`,
+        `not(equals($attributed_flow, ""))` // Only include flow-attributed revenue
+      ];
+
+      console.log('Calculating flow revenue (last 30 days) using $attributed_flow...');
+      
+      // Query metric aggregates grouped by $attributed_flow
+      const revenueResult = await this.queryMetricAggregates(placedOrderId, {
+        measurements: ['sum_value'],
+        filters: dateFilters,
+        by: ['$attributed_flow'], // Group by flow (not message)
+        timezone: 'UTC'
+      });
+
+      const totalFlowRevenue = revenueResult.total || 0;
+      console.log(`Total flow revenue (last 30 days): $${totalFlowRevenue.toFixed(2)}`);
+
+      return totalFlowRevenue;
+    } catch (error) {
+      console.error('Error calculating flow revenue:', error.message);
+      return 0;
+    }
+  }
+
+  // Revenue Metrics - Last 30 days, only email-attributed revenue
+  async getRevenueMetrics() {
+    try {
+      // Last 30 days date range
+      const endDate = new Date();
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - 30);
 
       let totalRevenue = 0;
-      const revenueBySource = {};
+      const revenueByCampaigns = {};
+      const revenueByFlows = {};
+      let flowRevenueLastMonth = 0; // Add flow revenue for last month
       let revenueOverTime = [];
 
       try {
@@ -1162,37 +1284,186 @@ export class KlaviyoService {
 
         const placedOrderId = findMetricId('placed order');
 
-        // Calculate revenue from Placed Order metric
-        // Use the Query Metric Aggregates endpoint
-        if (placedOrderId) {
-          console.log('Calculating revenue from Placed Order events (last 12 months)...');
-          const revenueData = await this.calculateRevenueByMetricId(placedOrderId, {
-            startDate: startDate.toISOString(),
-            endDate: endDate.toISOString(),
-            interval: 'day', // Get daily breakdown
-            timezone: 'UTC'
-          });
-
-          totalRevenue = revenueData.totalRevenue || 0;
-          revenueOverTime = revenueData.revenueOverTime || [];
-
-          console.log(`Total revenue calculated: $${totalRevenue.toFixed(2)}`);
-        } else {
+        if (!placedOrderId) {
           console.warn('Placed Order metric not found, cannot calculate revenue');
+          return {
+            totalRevenue: 0,
+            revenueByCampaigns: {},
+            revenueByFlows: {},
+            revenueByEmailSource: {},
+            revenueOverTime: []
+          };
         }
+
+        // Build date filters for last 30 days
+        const dateFilters = [
+          `greater-or-equal(datetime,${startDate.toISOString()})`,
+          `less-than(datetime,${endDate.toISOString()})`
+        ];
+
+        // Get revenue grouped by $attributed_message (campaigns and flows)
+        // This will only include revenue that is attributed to email messages
+        console.log('Calculating email-attributed revenue (last 30 days)...');
+        
+        const revenueResult = await this.queryMetricAggregates(placedOrderId, {
+          measurements: ['sum_value'],
+          filters: dateFilters,
+          by: ['$attributed_message'], // Group by campaign/flow message
+          timezone: 'UTC'
+        });
+
+        // Get campaign and flow metrics with grouped data to identify message IDs
+        // We'll use the existing grouped revenue data from campaign and flow metrics
+        const [campaignMetricsResult, flowMetricsResult] = await Promise.allSettled([
+          this.getCampaignMetrics({ startDate: startDate.toISOString(), endDate: endDate.toISOString() }),
+          this.getFlowMetrics({ startDate: startDate.toISOString(), endDate: endDate.toISOString() })
+        ]);
+
+        const campaignMetrics = campaignMetricsResult.status === 'fulfilled' ? campaignMetricsResult.value : { grouped: {} };
+        const flowMetrics = flowMetricsResult.status === 'fulfilled' ? flowMetricsResult.value : { grouped: {} };
+
+        // Get campaign and flow names for message IDs
+        const [campaignsResponse, flowsResponse] = await Promise.allSettled([
+          this.getCampaigns(),
+          this.getFlows()
+        ]);
+
+        const campaigns = campaignsResponse.status === 'fulfilled' ? campaignsResponse.value : { data: [] };
+        const flows = flowsResponse.status === 'fulfilled' ? flowsResponse.value : { data: [] };
+
+        // Build a map of message ID to campaign/flow name
+        const messageToCampaignName = {};
+        const messageToFlowName = {};
+
+        // Map campaign message IDs to campaign names
+        // Use the filter approach: GET /campaign-messages/?filter=equals(campaign_id,"...")
+        // Note: No page[size] parameter - Klaviyo returns default page size automatically
+        if (campaigns?.data && campaigns.data.length > 0) {
+          for (const campaign of campaigns.data.slice(0, 20)) { // Limit to avoid too many API calls
+            try {
+              const campaignId = campaign.id;
+              const campaignName = campaign.attributes?.name || `Campaign ${campaignId.substring(0, 8)}`;
+              
+              // Use filter approach instead of nested endpoint
+              const messagesResponse = await this.makeRequest(
+                '/campaign-messages/',
+                'GET',
+                null,
+                { 
+                  'filter': `equals(campaign_id,"${campaignId}")`
+                  // No page[size] - Klaviyo handles pagination automatically
+                }
+              );
+              if (messagesResponse?.data) {
+                messagesResponse.data.forEach(msg => {
+                  if (msg.id) messageToCampaignName[msg.id] = campaignName;
+                });
+              }
+              await this.wait(500); // Rate limiting
+            } catch (err) {
+              console.error(`Error fetching messages for campaign ${campaign.id}:`, err.message);
+            }
+          }
+        }
+
+        // Map flow action IDs to flow names
+        if (flows?.data && flows.data.length > 0) {
+          for (const flow of flows.data.slice(0, 20)) { // Limit to avoid too many API calls
+            try {
+              const flowId = flow.id;
+              const flowName = flow.attributes?.name || `Flow ${flowId.substring(0, 8)}`;
+              const actionsResponse = await this.makeRequest(
+                `/flows/${flowId}/flow-actions/`,
+                'GET',
+                null,
+                { 'page[size]': 50 }
+              );
+              if (actionsResponse?.data) {
+                actionsResponse.data.forEach(action => {
+                  if (action.id) messageToFlowName[action.id] = flowName;
+                });
+              }
+              await this.wait(500); // Rate limiting
+            } catch (err) {
+              console.error(`Error fetching actions for flow ${flow.id}:`, err.message);
+            }
+          }
+        }
+
+        // Process grouped revenue data
+        const groupedRevenue = revenueResult.grouped || {};
+        
+        for (const [messageId, revenue] of Object.entries(groupedRevenue)) {
+          const revenueValue = parseFloat(revenue) || 0;
+          if (revenueValue > 0) {
+            totalRevenue += revenueValue;
+
+            // Determine if this is a campaign or flow based on our maps
+            if (messageToCampaignName[messageId]) {
+              const campaignName = messageToCampaignName[messageId];
+              revenueByCampaigns[campaignName] = (revenueByCampaigns[campaignName] || 0) + revenueValue;
+            } else if (messageToFlowName[messageId]) {
+              const flowName = messageToFlowName[messageId];
+              revenueByFlows[flowName] = (revenueByFlows[flowName] || 0) + revenueValue;
+            } else {
+              // If we can't identify it, check if it appears in campaign or flow grouped data
+              if (campaignMetrics.grouped?.revenue?.[messageId]) {
+                revenueByCampaigns[`Campaign ${messageId.substring(0, 8)}`] = (revenueByCampaigns[`Campaign ${messageId.substring(0, 8)}`] || 0) + revenueValue;
+              } else if (flowMetrics.grouped?.revenue?.[messageId]) {
+                revenueByFlows[`Flow ${messageId.substring(0, 8)}`] = (revenueByFlows[`Flow ${messageId.substring(0, 8)}`] || 0) + revenueValue;
+              }
+            }
+          }
+        }
+
+        // Get revenue over time (daily breakdown) - only email-attributed
+        const revenueOverTimeResult = await this.queryMetricAggregates(placedOrderId, {
+          measurements: ['sum_value'],
+          filters: [
+            ...dateFilters,
+            // Only include revenue with $attributed_message (email-attributed)
+            `greater-than($attributed_message,"")`
+          ],
+          interval: 'day',
+          timezone: 'UTC'
+        });
+
+        // Process revenue over time from the response
+        // Note: The API response structure for interval data may differ
+        // For now, we'll use the total and create a simple breakdown
+        if (revenueOverTimeResult.total > 0) {
+          // If we have interval data, it would be in the response structure
+          // For simplicity, we'll return an empty array and let the frontend handle it
+          revenueOverTime = [];
+        }
+
+        // Get flow revenue for last month using $attributed_flow
+        flowRevenueLastMonth = await this.getFlowRevenueLastMonth();
+
+        console.log(`Total email-attributed revenue (last 30 days): $${totalRevenue.toFixed(2)}`);
+        console.log(`Flow revenue (last month): $${flowRevenueLastMonth.toFixed(2)}`);
+        console.log(`Revenue by campaigns:`, Object.keys(revenueByCampaigns).length, 'campaigns');
+        console.log(`Revenue by flows:`, Object.keys(revenueByFlows).length, 'flows');
+
       } catch (err) {
         console.error('Error fetching revenue events:', err.message);
       }
 
       return {
         totalRevenue,
-        revenueByEmailSource: revenueBySource,
+        revenueByCampaigns,
+        revenueByFlows,
+        flowRevenueLastMonth, // Flow revenue for last month using $attributed_flow
+        revenueByEmailSource: { ...revenueByCampaigns, ...revenueByFlows }, // For backward compatibility
         revenueOverTime: revenueOverTime
       };
     } catch (error) {
       console.error('Error fetching revenue metrics:', error);
       return {
         totalRevenue: 0,
+        revenueByCampaigns: {},
+        revenueByFlows: {},
+        flowRevenueLastMonth: 0,
         revenueByEmailSource: {},
         revenueOverTime: []
       };
@@ -1200,16 +1471,39 @@ export class KlaviyoService {
   }
 
   // Get all metrics - Main method used by the API (Complex version)
+  // Use sequential processing to avoid rate limiting
+  // All revenue-related metrics use a consistent 30-day window
   async getAllMetrics() {
     try {
-      const [campaignMetrics, flowMetrics, eventMetrics, profileMetrics, revenueMetrics] = 
-        await Promise.all([
-          this.getCampaignMetrics(),
-          this.getFlowMetrics(),
-          this.getEventMetrics(),
-          this.getProfileMetrics(),
-          this.getRevenueMetrics()
-        ]);
+      // Define consistent date range for all revenue metrics (last 30 days)
+      const endDate = new Date();
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - 30);
+      const dateRange = {
+        startDate: startDate.toISOString(),
+        endDate: endDate.toISOString()
+      };
+
+      // Process metrics sequentially to avoid overwhelming the API
+      // Start with simpler/faster endpoints first
+      console.log('Fetching profile metrics...');
+      const profileMetrics = await this.getProfileMetrics();
+      await this.wait(500); // Wait between calls
+      
+      console.log('Fetching event metrics...');
+      const eventMetrics = await this.getEventMetrics();
+      await this.wait(500);
+      
+      console.log('Fetching campaign metrics (last 30 days)...');
+      const campaignMetrics = await this.getCampaignMetrics(dateRange);
+      await this.wait(500);
+      
+      console.log('Fetching flow metrics (last 30 days)...');
+      const flowMetrics = await this.getFlowMetrics(dateRange);
+      await this.wait(500);
+      
+      console.log('Fetching revenue metrics (last 30 days)...');
+      const revenueMetrics = await this.getRevenueMetrics();
 
       return {
         campaign: campaignMetrics,
