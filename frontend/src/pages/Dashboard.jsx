@@ -162,6 +162,21 @@ const Dashboard = () => {
           </div>
         </div>
 
+        {/* Attribution Revenue Section */}
+        <div className="section">
+          <h2 className="section-title">Attribution Revenue (Conversion Rate × Revenue)</h2>
+          <div className="overview-grid">
+            <div className="metric-card white-bg">
+              <h3 className="metric-title">Campaign Attribution</h3>
+              <p className="metric-value">{formatCurrency(metrics?.revenue?.attributionRevenue?.campaignRevenue || 0)}</p>
+            </div>
+            <div className="metric-card purple-gradient">
+              <h3 className="metric-title">Flow Attribution</h3>
+              <p className="metric-value white">{formatCurrency(metrics?.revenue?.attributionRevenue?.flowRevenue || 0)}</p>
+            </div>
+          </div>
+        </div>
+
         {/* Event Metrics Section */}
         <div className="section">
           <h2 className="section-title">Event Metrics</h2>

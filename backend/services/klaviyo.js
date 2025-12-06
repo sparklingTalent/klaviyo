@@ -1268,6 +1268,8 @@ export class KlaviyoService {
       const revenueByFlows = {};
       let flowRevenueLastMonth = 0; // Add flow revenue for last month
       let revenueOverTime = [];
+      let campaignAttributionRevenue = 0;
+      let flowAttributionRevenue = 0;
 
       try {
         // Get all metrics to find Placed Order metric
@@ -1319,8 +1321,8 @@ export class KlaviyoService {
           this.getFlowMetrics({ startDate: startDate.toISOString(), endDate: endDate.toISOString() })
         ]);
 
-        const campaignMetrics = campaignMetricsResult.status === 'fulfilled' ? campaignMetricsResult.value : { grouped: {} };
-        const flowMetrics = flowMetricsResult.status === 'fulfilled' ? flowMetricsResult.value : { grouped: {} };
+        const campaignMetrics = campaignMetricsResult.status === 'fulfilled' ? campaignMetricsResult.value : { grouped: {}, delivered: 0, opens: 0, clicks: 0, revenue: 0 };
+        const flowMetrics = flowMetricsResult.status === 'fulfilled' ? flowMetricsResult.value : { grouped: {}, flowSends: 0, flowConversions: 0, flowConversionRate: '0.00%', flowRevenue: 0 };
 
         // Get campaign and flow names for message IDs
         const [campaignsResponse, flowsResponse] = await Promise.allSettled([
@@ -1440,10 +1442,51 @@ export class KlaviyoService {
         // Get flow revenue for last month using $attributed_flow
         flowRevenueLastMonth = await this.getFlowRevenueLastMonth();
 
+        // Calculate attribution revenue: conversion_rate * revenue
+        // Campaign Attribution = Total Campaign Revenue * Overall Conversion Rate
+        // Flow Attribution = Total Flow Revenue * Overall Conversion Rate
+        // Use the same conversion rate as shown in simple dashboard (from getFlowMetrics without date range = last 1 year)
+
+        // Calculate campaign attribution revenue using overall conversion rate
+        const totalCampaignRevenue = Object.values(revenueByCampaigns).reduce((sum, val) => sum + (parseFloat(val) || 0), 0);
+        const totalFlowRevenue = Object.values(revenueByFlows).reduce((sum, val) => sum + (parseFloat(val) || 0), 0);
+        
+        // Get conversion rate the same way as simple dashboard does - fetch flow metrics without date range (defaults to last 1 year)
+        // This ensures we use the same conversion rate (1.89%) that shows in the simple dashboard
+        let overallConversionRate = 0;
+        try {
+          const simpleFlowMetrics = await this.getFlowMetrics(); // No date range = defaults to last 1 year
+          const simpleFlowSends = simpleFlowMetrics.flowSends || 0;
+          const simpleFlowConversions = simpleFlowMetrics.flowConversions || 0;
+          overallConversionRate = simpleFlowSends > 0 ? (simpleFlowConversions / simpleFlowSends) : 0;
+          
+          console.log(`Simple dashboard flow metrics (for conversion rate): sends=${simpleFlowSends}, conversions=${simpleFlowConversions}, rate=${(overallConversionRate * 100).toFixed(2)}%`);
+        } catch (err) {
+          console.error('Error fetching flow metrics for conversion rate:', err.message);
+          // Fallback to using the flowMetrics from the 30-day window
+          const totalFlowSends = flowMetrics.flowSends || 0;
+          const totalFlowConversions = flowMetrics.flowConversions || 0;
+          overallConversionRate = totalFlowSends > 0 ? (totalFlowConversions / totalFlowSends) : 0;
+          console.log(`Using 30-day flow metrics as fallback: sends=${totalFlowSends}, conversions=${totalFlowConversions}, rate=${(overallConversionRate * 100).toFixed(2)}%`);
+        }
+        
+        // Use the same conversion rate for both campaigns and flows (overall email conversion rate)
+        campaignAttributionRevenue = totalCampaignRevenue * overallConversionRate;
+        flowAttributionRevenue = totalFlowRevenue * overallConversionRate;
+        
+        console.log(`Attribution Calculation:`);
+        console.log(`  Campaign Revenue: $${totalCampaignRevenue.toFixed(2)}`);
+        console.log(`  Flow Revenue: $${totalFlowRevenue.toFixed(2)}`);
+        console.log(`  Overall Conversion Rate: ${(overallConversionRate * 100).toFixed(2)}%`);
+        console.log(`  Campaign Attribution: $${campaignAttributionRevenue.toFixed(2)}`);
+        console.log(`  Flow Attribution: $${flowAttributionRevenue.toFixed(2)}`);
+
         console.log(`Total email-attributed revenue (last 30 days): $${totalRevenue.toFixed(2)}`);
         console.log(`Flow revenue (last month): $${flowRevenueLastMonth.toFixed(2)}`);
         console.log(`Revenue by campaigns:`, Object.keys(revenueByCampaigns).length, 'campaigns');
         console.log(`Revenue by flows:`, Object.keys(revenueByFlows).length, 'flows');
+        console.log(`Campaign Attribution Revenue: $${campaignAttributionRevenue.toFixed(2)}`);
+        console.log(`Flow Attribution Revenue: $${flowAttributionRevenue.toFixed(2)}`);
 
       } catch (err) {
         console.error('Error fetching revenue events:', err.message);
@@ -1455,7 +1498,12 @@ export class KlaviyoService {
         revenueByFlows,
         flowRevenueLastMonth, // Flow revenue for last month using $attributed_flow
         revenueByEmailSource: { ...revenueByCampaigns, ...revenueByFlows }, // For backward compatibility
-        revenueOverTime: revenueOverTime
+        revenueOverTime: revenueOverTime,
+        // Attribution revenue: conversion_rate * revenue for each campaign/flow
+        attributionRevenue: {
+          campaignRevenue: campaignAttributionRevenue || 0,
+          flowRevenue: flowAttributionRevenue || 0
+        }
       };
     } catch (error) {
       console.error('Error fetching revenue metrics:', error);
@@ -1465,7 +1513,11 @@ export class KlaviyoService {
         revenueByFlows: {},
         flowRevenueLastMonth: 0,
         revenueByEmailSource: {},
-        revenueOverTime: []
+        revenueOverTime: [],
+        attributionRevenue: {
+          campaignRevenue: 0,
+          flowRevenue: 0
+        }
       };
     }
   }
